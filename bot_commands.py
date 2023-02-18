@@ -23,6 +23,17 @@ class Commands(commands.Cog):
         self.cursor.execute(f"SELECT EXISTS(SELECT TRUE FROM user_data WHERE summoner == '{summoner_name}');")
         return self.cursor.fetchone()[0]
 
+    @commands.command(name="update")
+    async def update(self, ctx: commands.Context):
+        self.cursor.execute("SELECT summoner_id FROM user_data")
+        for summonner in self.cursor.fetchall()[0]:
+            self.cursor.execute(f"SELECT date FROM player_data WHERE summoner_id == '{summonner}'")
+            matches = self.watcher.league.by_summoner(self.region, summonner)
+            ranked_stats = matches[0]
+            league_points = ranked_stats["leaguePoints"]
+            tier: str = ranked_stats["tier"]
+            rank: str = ranked_stats["rank"]
+
     @commands.command(name="test")
     async def test(self, ctx, summoner_name):
         player = self.watcher.summoner.by_name(self.region, summoner_name)
@@ -61,6 +72,7 @@ class Commands(commands.Cog):
             await ctx.reply("Vous avez bien été ajouté a la base de données")
         self.connection.commit()
 
+
     @commands.command(name="stats")
     async def stats(self, ctx: commands.Context, user: discord.Member = None):
         if not user:
@@ -72,7 +84,8 @@ class Commands(commands.Cog):
             self.cursor.execute(f"SELECT summoner FROM user_data WHERE user_id == {user.id}")
             summoner_name = self.cursor.fetchone()[0]
             player = self.watcher.summoner.by_name(self.region, summoner_name)
-            ranked_stats = self.watcher.league.by_summoner(self.region, player["id"])[0]
+            matches = self.watcher.league.by_summoner(self.region, player["id"])
+            ranked_stats = matches[0]
             queue_type: str = ranked_stats["queueType"]
             tier: str = ranked_stats["tier"]
             rank: str = ranked_stats["rank"]
@@ -97,4 +110,10 @@ class Commands(commands.Cog):
             embed_stats.add_field(name="Inactif", value=inactive, inline=False)
             embed_stats.add_field(name="En winnerQ", value=hot_streak, inline=False)
 
+
+            self.cursor.execute(f"CREATE TABLE {user.name}("
+                                f"TEXT id = '{matches}',"
+                                f"TEXT tier = '{tier}',"
+                                f""
+                                f")")
             await ctx.send(embed=embed_stats)
