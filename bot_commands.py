@@ -1,8 +1,8 @@
+import datetime
 import sqlite3
 
 import discord
 from discord.ext import commands
-from pprint import pprint
 
 from riotwatcher import LolWatcher
 
@@ -19,45 +19,9 @@ class Commands(commands.Cog):
         self.cursor.execute(f"SELECT EXISTS(SELECT TRUE FROM user_data WHERE user_id == {user_id});")
         return self.cursor.fetchone()[0]
 
-    def check_if_summoner_in_table(self, summoner_name):
-        self.cursor.execute(f"SELECT EXISTS(SELECT TRUE FROM user_data WHERE summoner == '{summoner_name}');")
-        return self.cursor.fetchone()[0]
-
-    @commands.command(name="update")
-    async def update(self, ctx: commands.Context):
-        self.cursor.execute("SELECT summoner_id FROM user_data")
-        for summonner in self.cursor.fetchall()[0]:
-            self.cursor.execute(f"SELECT date FROM player_data WHERE summoner_id == '{summonner}'")
-            matches = self.watcher.league.by_summoner(self.region, summonner)
-            ranked_stats = matches[0]
-            league_points = ranked_stats["leaguePoints"]
-            tier: str = ranked_stats["tier"]
-            rank: str = ranked_stats["rank"]
-
-    @commands.command(name="test")
-    async def test(self, ctx, summoner_name):
-        player = self.watcher.summoner.by_name(self.region, summoner_name)
-        match_list = self.watcher.match.matchlist_by_puuid(self.region, player["puuid"])
-        pprint(self.watcher.match.by_id(self.region, match_list[0]))
-
-    def winrate(self, summoner_name):
-        # We retrieve the player
-        player = self.watcher.summoner.by_name(self.region, summoner_name)
-        match_list = self.watcher.match.matchlist_by_puuid(self.region, player["puuid"])
-        win_rate = 0
-        wins = 0
-        loses = 0
-        for match_id in match_list:
-            match_detail = self.watcher.match.by_id(self.region, match_id)
-            for participant in match_detail["info"]["participants"]:
-                if participant["summonerId"] == player["id"]:
-                    if participant["win"]:
-                        win_rate += 1
-                        wins += 1
-                    else:
-                        loses += 1
-        win_rate = win_rate / len(match_list) * 100
-        return win_rate, wins, loses
+    def winrate(self, wins, loses):
+        win_rate = round(wins / (wins + loses) * 100)
+        return win_rate
 
     @commands.command(name="addme")
     async def addme(self, ctx: commands.Context, player_name):
@@ -68,10 +32,10 @@ class Commands(commands.Cog):
             await ctx.reply("Un utilisateur avec ce nom est déjà présent dans la base de données.")
         else:
             player_id = self.watcher.summoner.by_name(self.region, player_name)["id"]
-            self.cursor.execute(f"INSERT INTO user_data VALUES ('{sender_name}', {sender_id}, '{player_name}', '{player_id}')")
+            self.cursor.execute(
+                f"INSERT INTO user_data VALUES ('{sender_name}', {sender_id}, '{player_name}', '{player_id}')")
             await ctx.reply("Vous avez bien été ajouté a la base de données")
         self.connection.commit()
-
 
     @commands.command(name="stats")
     async def stats(self, ctx: commands.Context, user: discord.Member = None):
@@ -81,39 +45,68 @@ class Commands(commands.Cog):
             await ctx.reply("La personne spécifiée n'est pas dans la base de données. "
                             "Si c'est vous, enregistrez-vous avec !addme <pseudo>")
         else:
-            self.cursor.execute(f"SELECT summoner FROM user_data WHERE user_id == {user.id}")
-            summoner_name = self.cursor.fetchone()[0]
-            player = self.watcher.summoner.by_name(self.region, summoner_name)
-            matches = self.watcher.league.by_summoner(self.region, player["id"])
-            ranked_stats = matches[0]
-            queue_type: str = ranked_stats["queueType"]
-            tier: str = ranked_stats["tier"]
-            rank: str = ranked_stats["rank"]
-            league_points = ranked_stats["leaguePoints"]
-            win_rate, wins, loses = self.winrate(summoner_name)
-            inactive = ranked_stats["inactive"]
-            hot_streak = ranked_stats["hotStreak"]
-            if inactive:
-                inactive = "Oui"
-            else:
-                inactive = "Non"
-            if hot_streak:
-                hot_streak = "Oui"
-            else:
-                hot_streak = "Non"
+            stats = self.get_stats(user)
+            summoner_name = stats[0]
+            queue_type = stats[1]
+            tier: str = stats[2]
+            rank: str = stats[3]
+            league_points = stats[4]
+            wins = stats[5]
+            losses = stats[6]
+            win_rate = stats[7]
+            inactive = stats[8]
+            hot_streak = stats[9]
             embed_stats = discord.Embed(title=f"Statistiques de {summoner_name}")
             embed_stats.add_field(name="Type de ranked", value=queue_type, inline=False)
             embed_stats.add_field(name="Rank", value=tier.capitalize() + f" {rank}", inline=False)
             embed_stats.add_field(name="LP", value=league_points, inline=False)
             embed_stats.add_field(name="Winrate, nombres de victoires, nombre de défaites",
-                                  value=f"{win_rate}% de winrate, {wins} victoires, {loses} défaites.", inline=False)
+                                  value=f"{win_rate}% de winrate, {wins} victoires, {losses} défaites.", inline=False)
             embed_stats.add_field(name="Inactif", value=inactive, inline=False)
             embed_stats.add_field(name="En winnerQ", value=hot_streak, inline=False)
-
-
-            self.cursor.execute(f"CREATE TABLE {user.name}("
-                                f"TEXT id = '{matches}',"
-                                f"TEXT tier = '{tier}',"
-                                f""
-                                f")")
             await ctx.send(embed=embed_stats)
+            self.update_stats()
+
+    def update_stats(self):
+        self.cursor.execute(f"SELECT summoner FROM user_data")
+        summoners = self.cursor.fetchall()[0]
+        for summoner in summoners:
+            summoner = self.watcher.summoner.by_name(self.region, summoner)
+            stats = self.watcher.league.by_summoner(self.region, summoner["id"])[0]
+            summoner_id = stats["summonerId"]
+            tier: str = stats["tier"]
+            rank: str = stats["rank"]
+            league_points = stats["leaguePoints"]
+
+            self.cursor.execute(f"SELECT date FROM player_data WHERE summoner_id == '{summoner_id}'")
+            req = self.cursor.fetchall()
+            now = datetime.datetime.now()
+            if req:
+                nearest_date = now - datetime.datetime.fromisoformat(req[0][0])
+                for date in req[0]:
+                    if now - datetime.datetime.fromisoformat(date) < nearest_date:
+                        nearest_date = now = datetime.datetime.fromisoformat(date)
+
+    def get_stats(self, user: discord.Member):
+        self.cursor.execute(f"SELECT summoner FROM user_data WHERE user_id == {user.id}")
+        summoner_name = self.cursor.fetchone()[0]
+        player = self.watcher.summoner.by_name(self.region, summoner_name)
+        stats = self.watcher.league.by_summoner(self.region, player["id"])[0]
+        queue_type: str = stats["queueType"]
+        tier: str = stats["tier"]
+        rank: str = stats["rank"]
+        league_points = stats["leaguePoints"]
+        wins = stats["wins"]
+        losses = stats["losses"]
+        win_rate = self.winrate(wins, losses)
+        inactive = stats["inactive"]
+        hot_streak = stats["hotStreak"]
+        if inactive:
+            inactive = "Oui"
+        else:
+            inactive = "Non"
+        if hot_streak:
+            hot_streak = "Oui"
+        else:
+            hot_streak = "Non"
+        return summoner_name, queue_type, tier, rank, league_points, wins, losses, win_rate, inactive, hot_streak
