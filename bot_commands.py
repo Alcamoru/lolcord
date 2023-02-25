@@ -1,5 +1,6 @@
 import datetime
 import sqlite3
+from pprint import pprint
 
 import discord
 from discord.ext import commands
@@ -68,10 +69,10 @@ class Commands(commands.Cog):
             self.update_stats()
 
     def update_stats(self):
-        self.cursor.execute(f"SELECT summoner FROM user_data")
+        self.cursor.execute(f"SELECT summoner_id FROM user_data")
         summoners = self.cursor.fetchall()[0]
         for summoner in summoners:
-            summoner = self.watcher.summoner.by_name(self.region, summoner)
+            summoner = self.watcher.summoner.by_id(self.region, summoner)
             stats = self.watcher.league.by_summoner(self.region, summoner["id"])[0]
             summoner_id = stats["summonerId"]
             tier: str = stats["tier"]
@@ -85,7 +86,12 @@ class Commands(commands.Cog):
                 nearest_date = now - datetime.datetime.fromisoformat(req[0][0])
                 for date in req[0]:
                     if now - datetime.datetime.fromisoformat(date) < nearest_date:
-                        nearest_date = now = datetime.datetime.fromisoformat(date)
+                        nearest_date = now - datetime.datetime.fromisoformat(date)
+                matches = self.watcher.match.matchlist_by_puuid(self.region, summoner["puuid"])
+                match_detail = self.watcher.match.by_id(self.region, matches[0])
+                timestamp = match_detail["info"]["gameEndTimestamp"]
+                print(timestamp)
+                game_end_datetime = datetime.datetime.utcfromtimestamp(int(timestamp) / 1000)
 
     def get_stats(self, user: discord.Member):
         self.cursor.execute(f"SELECT summoner FROM user_data WHERE user_id == {user.id}")
